@@ -149,7 +149,8 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         return
 
     page_width_pt, page_height_pt = A4
-    v_spacing_pt = 2 * mm
+    # Maintain a vertical gap of 78.383 px between rows (converted to points).
+    v_spacing_pt = 78.383 * PX_TO_MM * mm
 
     start_x_px = 22.793
     top_margin_px = 31.625
