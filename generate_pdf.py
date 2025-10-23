@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import copy
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Sequence, Tuple
@@ -148,21 +149,43 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         return
 
     page_width_pt, page_height_pt = A4
-    margin_pt = 10 * mm
-    h_spacing_pt = 2 * mm
     v_spacing_pt = 2 * mm
+
+    start_x_px = 22.793
+    top_margin_px = 31.625
+    overlap_px = 11.929
+
+    start_x_pt = start_x_px * PX_TO_MM * mm
+    top_margin_pt = top_margin_px * PX_TO_MM * mm
+    overlap_pt = overlap_px * PX_TO_MM * mm
 
     fig_width_pt = figs[0].width_px * PX_TO_MM * mm
     fig_height_pt = figs[0].height_px * PX_TO_MM * mm
 
-    max_cols = max(1, int((page_width_pt - 2 * margin_pt + h_spacing_pt) // (fig_width_pt + h_spacing_pt)))
-    max_rows = max(1, int((page_height_pt - 2 * margin_pt + v_spacing_pt) // (fig_height_pt + v_spacing_pt)))
-    per_page = max_cols * max_rows
+    start_y = page_height_pt - top_margin_pt - fig_height_pt
+    if start_y < 0:
+        start_y = 0
 
-    x_space = (max_cols * fig_width_pt) + ((max_cols - 1) * h_spacing_pt)
-    y_space = (max_rows * fig_height_pt) + ((max_rows - 1) * v_spacing_pt)
-    start_x = margin_pt + max(0.0, (page_width_pt - 2 * margin_pt - x_space) / 2)
-    start_y = page_height_pt - margin_pt - fig_height_pt
+    step_x_pt = fig_width_pt - overlap_pt
+    if step_x_pt <= 0:
+        step_x_pt = fig_width_pt
+
+    available_width_pt = page_width_pt - start_x_pt
+    if available_width_pt <= fig_width_pt:
+        max_cols = 1
+    else:
+        max_cols = max(1, math.floor((available_width_pt - fig_width_pt) / step_x_pt) + 1)
+
+    row_height_pt = fig_height_pt + v_spacing_pt
+    max_rows = 0
+    current_y = start_y
+    while current_y >= 0:
+        max_rows += 1
+        current_y -= row_height_pt
+    if max_rows == 0:
+        max_rows = 1
+
+    per_page = max_cols * max_rows
 
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
     c = canvas.Canvas(str(pdf_path), pagesize=A4)
@@ -175,7 +198,7 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         if slot == 0 and index != 0:
             c.showPage()
 
-        x = start_x + col * (fig_width_pt + h_spacing_pt)
+        x = start_x_pt + col * step_x_pt
         y = start_y - row * (fig_height_pt + v_spacing_pt)
 
         drawing = svg2rlg(str(fig.svg_path))
