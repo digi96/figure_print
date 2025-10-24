@@ -154,7 +154,7 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
 
     start_x_px = 22.793
     top_margin_px = 31.625
-    overlap_px = 11.929
+    overlap_px = 0.0
 
     start_x_pt = start_x_px * PX_TO_MM * mm
     top_margin_pt = top_margin_px * PX_TO_MM * mm
@@ -176,6 +176,7 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         max_cols = 1
     else:
         max_cols = max(1, math.floor((available_width_pt - fig_width_pt) / step_x_pt) + 1)
+    max_cols = min(max_cols, 12)
 
     row_height_pt = fig_height_pt + v_spacing_pt
     max_rows = 0
