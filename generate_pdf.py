@@ -149,14 +149,14 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         return
 
     page_width_pt, page_height_pt = A4
-    # Maintain a vertical gap of 78.383 px between rows (converted to points).
-    v_spacing_pt = 78.383 * PX_TO_MM * mm
+    # Maintain a vertical gap of 70.737 px between rows (converted to points).
+    v_spacing_pt = 70.737 * PX_TO_MM * mm
 
-    start_x_px = 22.793
+    horizontal_padding_px = 22.793
     top_margin_px = 31.625
     overlap_px = 0.0
 
-    start_x_pt = start_x_px * PX_TO_MM * mm
+    start_x_pt = horizontal_padding_px * PX_TO_MM * mm
     top_margin_pt = top_margin_px * PX_TO_MM * mm
     overlap_pt = overlap_px * PX_TO_MM * mm
 
@@ -171,7 +171,9 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
     if step_x_pt <= 0:
         step_x_pt = fig_width_pt
 
-    available_width_pt = page_width_pt - start_x_pt
+    available_width_pt = page_width_pt - 2 * start_x_pt
+    if available_width_pt <= 0:
+        available_width_pt = fig_width_pt
     if available_width_pt <= fig_width_pt:
         max_cols = 1
     else:
