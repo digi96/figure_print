@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import io
 import logging
 import math
 from dataclasses import dataclass
@@ -24,13 +25,15 @@ try:
     from reportlab.pdfgen import canvas
     from svglib.svglib import svg2rlg
     from reportlab.graphics import renderPDF
+    from PyPDF2 import PdfReader, PdfWriter
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit(
-        "Missing dependencies. Please install them with 'pip install reportlab svglib'."
+        "Missing dependencies. Please install them with 'pip install reportlab svglib PyPDF2'."
     ) from exc
 
 SVG_NS = "http://www.w3.org/2000/svg"
 PX_TO_MM = 0.2645833333
+BACKGROUND_PDF = Path(__file__).resolve().with_name("background.pdf")
 
 
 def parse_length(value: str | None) -> float:
@@ -192,7 +195,8 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
     per_page = max_cols * max_rows
 
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    c = canvas.Canvas(str(pdf_path), pagesize=A4)
+    pdf_buffer = io.BytesIO()
+    c = canvas.Canvas(pdf_buffer, pagesize=A4)
 
     for index, fig in enumerate(figs):
         slot = index % per_page
@@ -215,6 +219,36 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         renderPDF.draw(drawing, c, x, y)
 
     c.save()
+
+    pdf_buffer.seek(0)
+
+    if BACKGROUND_PDF.exists():
+        background_reader = PdfReader(str(BACKGROUND_PDF))
+        background_pages = list(background_reader.pages)
+        if not background_pages:
+            logging.warning(
+                "Background PDF %s has no pages; using blank background.", BACKGROUND_PDF
+            )
+        else:
+            layout_reader = PdfReader(pdf_buffer)
+            writer = PdfWriter()
+            for index, layout_page in enumerate(layout_reader.pages):
+                template_index = min(index, len(background_pages) - 1)
+                try:
+                    background_page = background_pages[template_index].copy()
+                except AttributeError:  # PyPDF2 < 2
+                    background_page = copy.deepcopy(background_pages[template_index])
+                merge_fn = getattr(background_page, "merge_page", None)
+                if merge_fn is None:
+                    merge_fn = background_page.mergePage
+                merge_fn(layout_page)
+                writer.add_page(background_page)
+            with pdf_path.open("wb") as out_file:
+                writer.write(out_file)
+            return
+
+    with pdf_path.open("wb") as out_file:
+        out_file.write(pdf_buffer.getvalue())
 
 
 def process_orders(order_dir: Path, fig_output_dir: Path, pdf_path: Path) -> None:
