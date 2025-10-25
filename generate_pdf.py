@@ -128,8 +128,10 @@ def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabo
     return Figabooth(
         order_id=output_path.stem.replace("_figabooth", ""),
         svg_path=output_path,
-        width_px=total_width,
-        height_px=total_height,
+        width_px=60,
+        height_px=92,
+        #width_px=total_width,
+        #height_px=total_height,
     )
 
 
@@ -152,12 +154,12 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         return
 
     page_width_pt, page_height_pt = A4
-    # Maintain a vertical gap of 70.737 px between rows (converted to points).
-    v_spacing_pt = 70.737 * PX_TO_MM * mm
+    # Maintain a vertical gap of 133 px between rows (converted to points).
+    v_spacing_pt = 133 * PX_TO_MM * mm
 
-    horizontal_padding_px = 22.793
-    top_margin_px = 31.625
-    overlap_px = 0.0
+    horizontal_padding_px = 39.375
+    top_margin_px = 45.625
+    overlap_px = - 0.35
 
     start_x_pt = horizontal_padding_px * PX_TO_MM * mm
     top_margin_pt = top_margin_px * PX_TO_MM * mm
@@ -174,14 +176,15 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
     if step_x_pt <= 0:
         step_x_pt = fig_width_pt
 
-    available_width_pt = page_width_pt - 2 * start_x_pt
-    if available_width_pt <= 0:
-        available_width_pt = fig_width_pt
-    if available_width_pt <= fig_width_pt:
-        max_cols = 1
-    else:
-        max_cols = max(1, math.floor((available_width_pt - fig_width_pt) / step_x_pt) + 1)
-    max_cols = min(max_cols, 12)
+    # available_width_pt = page_width_pt - 2 * start_x_pt
+    # if available_width_pt <= 0:
+    #     available_width_pt = fig_width_pt
+    # if available_width_pt <= fig_width_pt:
+    #     max_cols = 1
+    # else:
+    #     max_cols = max(1, math.floor((available_width_pt - fig_width_pt) / step_x_pt) + 1)
+    #max_cols = min(max_cols, 12)
+    max_cols = 12
 
     row_height_pt = fig_height_pt + v_spacing_pt
     max_rows = 0
@@ -224,8 +227,7 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
 
     if BACKGROUND_PDF.exists():
         background_reader = PdfReader(str(BACKGROUND_PDF))
-        background_pages = list(background_reader.pages)
-        if not background_pages:
+        if len(background_reader.pages) == 0:
             logging.warning(
                 "Background PDF %s has no pages; using blank background.", BACKGROUND_PDF
             )
@@ -233,16 +235,30 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
             layout_reader = PdfReader(pdf_buffer)
             writer = PdfWriter()
             for index, layout_page in enumerate(layout_reader.pages):
-                template_index = min(index, len(background_pages) - 1)
+                template_index = min(index, len(background_reader.pages) - 1)
                 try:
-                    background_page = background_pages[template_index].copy()
-                except AttributeError:  # PyPDF2 < 2
-                    background_page = copy.deepcopy(background_pages[template_index])
-                merge_fn = getattr(background_page, "merge_page", None)
-                if merge_fn is None:
-                    merge_fn = background_page.mergePage
-                merge_fn(layout_page)
-                writer.add_page(background_page)
+                    # Access the page directly from the reader
+                    background_page = background_reader.pages[template_index]
+                    # Try the newer PyPDF2/PyPDF4 method first
+                    if hasattr(background_page, 'merge_page'):
+                        background_page.merge_page(layout_page)
+                    elif hasattr(background_page, 'mergePage'):
+                        background_page.mergePage(layout_page)
+                    else:
+                        # Fallback: create a copy and try merging
+                        background_page = copy.deepcopy(background_page)
+                        if hasattr(background_page, 'merge_page'):
+                            background_page.merge_page(layout_page)
+                        elif hasattr(background_page, 'mergePage'):
+                            background_page.mergePage(layout_page)
+                        else:
+                            logging.error("Cannot find merge method on background page")
+                            continue
+                    writer.add_page(background_page)
+                except Exception as e:
+                    logging.error("Error merging pages for index %d: %s", index, e)
+                    # Add just the layout page without background
+                    writer.add_page(layout_page)
             with pdf_path.open("wb") as out_file:
                 writer.write(out_file)
             return
