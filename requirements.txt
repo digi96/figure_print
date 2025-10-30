@@ -1,3 +1,5 @@
 reportlab
 svglib
 PyPDF2
+cairosvg
+pillow

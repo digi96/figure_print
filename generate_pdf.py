@@ -26,9 +26,12 @@ try:
     from svglib.svglib import svg2rlg
     from reportlab.graphics import renderPDF
     from PyPDF2 import PdfReader, PdfWriter
+    import cairosvg
+    from PIL import Image
+    from reportlab.lib.utils import ImageReader
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit(
-        "Missing dependencies. Please install them with 'pip install reportlab svglib PyPDF2'."
+        "Missing dependencies. Please install them with 'pip install reportlab svglib PyPDF2 cairosvg pillow'."
     ) from exc
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -148,6 +151,20 @@ def discover_orders(order_dir: Path) -> Sequence[Tuple[Path, Path, str]]:
     return pairs
 
 
+def svg_to_png_bytes(svg_path: Path, width_px: float, height_px: float) -> bytes:
+    """Convert SVG to PNG bytes using cairosvg for better clipPath support."""
+    with open(svg_path, 'rb') as svg_file:
+        svg_data = svg_file.read()
+    
+    # Convert SVG to PNG with specified dimensions
+    png_data = cairosvg.svg2png(
+        bytestring=svg_data,
+        output_width=int(width_px),
+        output_height=int(height_px)
+    )
+    return png_data
+
+
 def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
     if not figs:
         logging.info("No figabooths generated; skipping PDF creation.")
@@ -212,14 +229,23 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         x = start_x_pt + col * step_x_pt
         y = start_y - row * (fig_height_pt + v_spacing_pt)
 
-        drawing = svg2rlg(str(fig.svg_path))
-        if drawing.width == 0 or drawing.height == 0:
-            logging.warning("Skipping empty figabooth SVG for order %s", fig.order_id)
-            continue
-        scale_x = fig_width_pt / drawing.width
-        scale_y = fig_height_pt / drawing.height
-        drawing.scale(scale_x, scale_y)
-        renderPDF.draw(drawing, c, x, y)
+        # Use cairosvg for better clipPath support
+        try:
+            png_data = svg_to_png_bytes(fig.svg_path, fig.width_px * 4, fig.height_px * 4)  # 4x for better quality
+            img = Image.open(io.BytesIO(png_data))
+            img_reader = ImageReader(img)
+            c.drawImage(img_reader, x, y, width=fig_width_pt, height=fig_height_pt, mask='auto')
+        except Exception as e:
+            logging.warning("Failed to convert SVG %s with cairosvg: %s. Falling back to svglib.", fig.svg_path, e)
+            # Fallback to original svglib method
+            drawing = svg2rlg(str(fig.svg_path))
+            if drawing.width == 0 or drawing.height == 0:
+                logging.warning("Skipping empty figabooth SVG for order %s", fig.order_id)
+                continue
+            scale_x = fig_width_pt / drawing.width
+            scale_y = fig_height_pt / drawing.height
+            drawing.scale(scale_x, scale_y)
+            renderPDF.draw(drawing, c, x, y)
 
     c.save()
 
