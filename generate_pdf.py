@@ -13,22 +13,19 @@ import argparse
 import copy
 import io
 import logging
-import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Sequence, Tuple
 from xml.etree import ElementTree as ET
 
 try:
+    from cairosvg import svg2pdf
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
-    from reportlab.pdfgen import canvas
-    from svglib.svglib import svg2rlg
-    from reportlab.graphics import renderPDF
-    from PyPDF2 import PdfReader, PdfWriter
+    from PyPDF2 import PdfReader, PdfWriter, Transformation
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit(
-        "Missing dependencies. Please install them with 'pip install reportlab svglib PyPDF2'."
+        "Missing dependencies. Please install them with 'pip install cairosvg reportlab PyPDF2'."
     ) from exc
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -202,31 +199,54 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
     per_page = max_cols * max_rows
 
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    pdf_buffer = io.BytesIO()
-    c = canvas.Canvas(pdf_buffer, pagesize=A4)
+    pdf_writer = PdfWriter()
+    current_page = None
 
     for index, fig in enumerate(figs):
         slot = index % per_page
         row = slot // max_cols
         col = slot % max_cols
 
-        if slot == 0 and index != 0:
-            c.showPage()
+        if slot == 0:
+            current_page = pdf_writer.add_blank_page(width=page_width_pt, height=page_height_pt)
+
+        if current_page is None:
+            logging.error("Failed to create a PDF page for figabooth %s", fig.order_id)
+            continue
 
         x = start_x_pt + col * step_x_pt
         y = start_y - row * (fig_height_pt + v_spacing_pt)
 
-        drawing = svg2rlg(str(fig.svg_path))
-        if drawing.width == 0 or drawing.height == 0:
+        try:
+            fig_pdf_bytes = svg2pdf(url=str(fig.svg_path))
+        except Exception as exc:
+            logging.error("Failed to convert %s to PDF: %s", fig.svg_path, exc)
+            continue
+
+        fig_reader = PdfReader(io.BytesIO(fig_pdf_bytes))
+        if len(fig_reader.pages) == 0:
             logging.warning("Skipping empty figabooth SVG for order %s", fig.order_id)
             continue
-        scale_x = fig_width_pt / drawing.width
-        scale_y = fig_height_pt / drawing.height
-        drawing.scale(scale_x, scale_y)
-        renderPDF.draw(drawing, c, x, y)
 
-    c.save()
+        fig_page = fig_reader.pages[0]
+        fig_width = float(fig_page.mediabox.width)
+        fig_height = float(fig_page.mediabox.height)
+        if fig_width == 0 or fig_height == 0:
+            logging.warning("Skipping zero-sized figabooth SVG for order %s", fig.order_id)
+            continue
 
+        scale_x = fig_width_pt / fig_width
+        scale_y = fig_height_pt / fig_height
+        transformation = Transformation(matrix=[scale_x, 0, 0, scale_y, x, y])
+
+        try:
+            current_page.merge_transformed_page(fig_page, transformation, expand=False)
+        except Exception as exc:
+            logging.error("Failed to place figabooth %s on the PDF: %s", fig.order_id, exc)
+            continue
+
+    pdf_buffer = io.BytesIO()
+    pdf_writer.write(pdf_buffer)
     pdf_buffer.seek(0)
 
     if BACKGROUND_PDF.exists():
