@@ -138,8 +138,8 @@ def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabo
 def discover_orders(order_dir: Path) -> Sequence[Tuple[Path, Path, str]]:
     pairs: List[Tuple[Path, Path, str]] = []
     for head_path in order_dir.glob("*_head.svg"):
-        order_id = head_path.stem[:-5]
-        body_path = order_dir / f"{order_id}_body.svg"
+        order_id = head_path.stem.replace("_head", "")
+        body_path = order_dir / f"{order_id}_torso.svg"
         if not body_path.exists():
             logging.warning("Skipping order %s: missing body SVG", order_id)
             continue
