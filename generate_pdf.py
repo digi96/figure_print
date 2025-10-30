@@ -237,7 +237,7 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
 
         scale_x = fig_width_pt / fig_width
         scale_y = fig_height_pt / fig_height
-        transformation = Transformation(scale_x, 0, 0, scale_y, x, y)
+        transformation = Transformation().scale(scale_x, scale_y).translate(tx=x, ty=y)
 
         try:
             current_page.merge_transformed_page(fig_page, transformation, expand=False)
