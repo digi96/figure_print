@@ -123,7 +123,11 @@ def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabo
     root.append(body_group)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    ET.ElementTree(root).write(output_path, encoding="utf-8", xml_declaration=True)
+
+    xml_buffer = io.BytesIO()
+    ET.ElementTree(root).write(xml_buffer, encoding="utf-8", xml_declaration=True)
+    svg_content = xml_buffer.getvalue().decode("utf-8").replace(" />", "/>")
+    output_path.write_text(svg_content, encoding="utf-8")
 
     return Figabooth(
         order_id=output_path.stem.replace("_figabooth", ""),
