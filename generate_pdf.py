@@ -240,7 +240,17 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         transformation = Transformation().scale(scale_x, scale_y).translate(tx=x, ty=y)
 
         try:
-            current_page.merge_transformed_page(fig_page, transformation, expand=False)
+            if hasattr(current_page, "merge_transformed_page"):
+                current_page.merge_transformed_page(fig_page, transformation, expand=False)
+            else:
+                fig_page_transformed = copy.deepcopy(fig_page)
+                fig_page_transformed.add_transformation(transformation)
+                if hasattr(current_page, "merge_page"):
+                    current_page.merge_page(fig_page_transformed)
+                elif hasattr(current_page, "mergePage"):
+                    current_page.mergePage(fig_page_transformed)
+                else:
+                    raise AttributeError("PageObject has no merge capability")
         except Exception as exc:
             logging.error("Failed to place figabooth %s on the PDF: %s", fig.order_id, exc)
             continue
