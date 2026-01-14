@@ -104,6 +104,9 @@ def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabo
         figabooth_dimensions(head_root, body_root)
     )
 
+    total_width = 57.2416
+    total_height = 81.6532
+
     ET.register_namespace("", SVG_NS)
     root = ET.Element(
         f"{{{SVG_NS}}}svg",
@@ -122,7 +125,10 @@ def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabo
 
     body_group = clone_as_group(body_root)
     body_offset_x = (total_width - body_width) / 2
-    body_group.set("transform", f"translate({body_offset_x},{head_height})")
+    #body_group.set("transform", f"translate({body_offset_x},{head_height})")
+    body_offset_y = parse_length("8.254px")
+    print(body_offset_y)
+    body_group.set("transform", f"translate({body_offset_x},{head_height-body_offset_y})")
     root.append(body_group)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,8 +137,8 @@ def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabo
     return Figabooth(
         order_id=output_path.stem.replace("_figabooth", ""),
         svg_path=output_path,
-        width_px=60,
-        height_px=92,
+        width_px=57.2416,
+        height_px=81.6532,
         #width_px=total_width,
         #height_px=total_height,
     )
@@ -170,48 +176,23 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         logging.info("No figabooths generated; skipping PDF creation.")
         return
 
-    page_width_pt, page_height_pt = A4
-    # Maintain a vertical gap of 133 px between rows (converted to points).
-    v_spacing_pt = 133 * PX_TO_MM * mm
+    _, page_height_pt = A4
 
-    horizontal_padding_px = 39.375
-    top_margin_px = 45.625
-    overlap_px = - 0.35
+    first_center_x_px = 51.4277
+    first_center_y_px = 235.2401
+    center_spacing_x_px = 45.2708
+    center_spacing_y_px = 168.1983
 
-    start_x_pt = horizontal_padding_px * PX_TO_MM * mm
-    top_margin_pt = top_margin_px * PX_TO_MM * mm
-    overlap_pt = overlap_px * PX_TO_MM * mm
+    first_center_x_pt = first_center_x_px
+    first_center_y_pt = page_height_pt - first_center_y_px
+    center_spacing_x_pt = center_spacing_x_px
+    center_spacing_y_pt = center_spacing_y_px
 
-    fig_width_pt = figs[0].width_px * PX_TO_MM * mm
-    fig_height_pt = figs[0].height_px * PX_TO_MM * mm
+    fig_width_pt = figs[0].width_px
+    fig_height_pt = figs[0].height_px
 
-    start_y = page_height_pt - top_margin_pt - fig_height_pt
-    if start_y < 0:
-        start_y = 0
-
-    step_x_pt = fig_width_pt - overlap_pt
-    if step_x_pt <= 0:
-        step_x_pt = fig_width_pt
-
-    # available_width_pt = page_width_pt - 2 * start_x_pt
-    # if available_width_pt <= 0:
-    #     available_width_pt = fig_width_pt
-    # if available_width_pt <= fig_width_pt:
-    #     max_cols = 1
-    # else:
-    #     max_cols = max(1, math.floor((available_width_pt - fig_width_pt) / step_x_pt) + 1)
-    #max_cols = min(max_cols, 12)
     max_cols = 12
-
-    row_height_pt = fig_height_pt + v_spacing_pt
-    max_rows = 0
-    current_y = start_y
-    while current_y >= 0:
-        max_rows += 1
-        current_y -= row_height_pt
-    if max_rows == 0:
-        max_rows = 1
-
+    max_rows = 4
     per_page = max_cols * max_rows
 
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -226,12 +207,19 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         if slot == 0 and index != 0:
             c.showPage()
 
-        x = start_x_pt + col * step_x_pt
-        y = start_y - row * (fig_height_pt + v_spacing_pt)
+        center_x = first_center_x_pt + col * center_spacing_x_pt
+        center_y = first_center_y_pt - row * center_spacing_y_pt
+        x = center_x - (fig_width_pt / 2)
+        y = center_y - (fig_height_pt / 2)
 
         # Use cairosvg for better clipPath support
         try:
-            png_data = svg_to_png_bytes(fig.svg_path, fig.width_px * 4, fig.height_px * 4)  # 4x for better quality
+            upscale_factor = 16
+            png_data = svg_to_png_bytes(
+                fig.svg_path,
+                fig.width_px * upscale_factor,
+                fig.height_px * upscale_factor,
+            )
             img = Image.open(io.BytesIO(png_data))
             img_reader = ImageReader(img)
             c.drawImage(img_reader, x, y, width=fig_width_pt, height=fig_height_pt, mask='auto')
