@@ -16,7 +16,7 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 from xml.etree import ElementTree as ET
 
 try:
@@ -94,6 +94,14 @@ class Figabooth:
     height_px: float
 
 
+@dataclass
+class OrderEntry:
+    order_id: str
+    head_path: Path
+    torso_path: Path
+    torso_back_path: Optional[Path] = None
+
+
 def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabooth:
     head_tree = ET.parse(head_path)
     body_tree = ET.parse(body_path)
@@ -144,16 +152,65 @@ def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabo
     )
 
 
-def discover_orders(order_dir: Path) -> Sequence[Tuple[Path, Path, str]]:
-    pairs: List[Tuple[Path, Path, str]] = []
+def write_empty_svg(output_path: Path, width: str, height: str, view_box: Optional[str]) -> None:
+    ET.register_namespace("", SVG_NS)
+    attrib = {
+        "width": width,
+        "height": height,
+        "version": "1.1",
+    }
+    if view_box:
+        attrib["viewBox"] = view_box
+    root = ET.Element(f"{{{SVG_NS}}}svg", attrib=attrib)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ET.ElementTree(root).write(output_path, encoding="utf-8", xml_declaration=True)
+
+
+def make_empty_head_svg(head_path: Path, output_path: Path) -> Path:
+    head_root = ET.parse(head_path).getroot()
+    width = head_root.get("width")
+    height = head_root.get("height")
+    view_box = head_root.get("viewBox")
+    if not width or not height:
+        if view_box:
+            parts = view_box.replace(',', ' ').split()
+            if len(parts) == 4:
+                width = width or parts[2]
+                height = height or parts[3]
+    if not width or not height:
+        raise ValueError(f"Head SVG {head_path} missing width/height and viewBox")
+    write_empty_svg(output_path, width, height, view_box)
+    return output_path
+
+
+def empty_figabooth(order_id: str, output_path: Path) -> Figabooth:
+    write_empty_svg(output_path, "57.2416", "81.6532", "0 0 57.2416 81.6532")
+    return Figabooth(
+        order_id=order_id,
+        svg_path=output_path,
+        width_px=57.2416,
+        height_px=81.6532,
+    )
+
+
+def discover_orders(order_dir: Path) -> Sequence[OrderEntry]:
+    pairs: List[OrderEntry] = []
     for head_path in order_dir.glob("*_head.svg"):
         order_id = head_path.stem.replace("_head", "")
-        body_path = order_dir / f"{order_id}_torso.svg"
-        if not body_path.exists():
+        torso_path = order_dir / f"{order_id}_torso.svg"
+        if not torso_path.exists():
             logging.warning("Skipping order %s: missing body SVG", order_id)
             continue
-        pairs.append((head_path, body_path, order_id))
-    pairs.sort(key=lambda item: item[2])
+        torso_back_path = order_dir / f"{order_id}_torso_back.svg"
+        pairs.append(
+            OrderEntry(
+                order_id=order_id,
+                head_path=head_path,
+                torso_path=torso_path,
+                torso_back_path=torso_back_path if torso_back_path.exists() else None,
+            )
+        )
+    pairs.sort(key=lambda item: item.order_id)
     return pairs
 
 
@@ -281,13 +338,30 @@ def layout_figabooths(figs: Sequence[Figabooth], pdf_path: Path) -> None:
         out_file.write(pdf_buffer.getvalue())
 
 
-def process_orders(order_dir: Path, fig_output_dir: Path, pdf_path: Path) -> None:
+def process_orders(order_dir: Path, fig_output_dir: Path, pdf_path: Path, pdf_back_path: Path) -> None:
     figabooths: List[Figabooth] = []
-    for head_path, body_path, order_id in discover_orders(order_dir):
-        fig_path = fig_output_dir / f"{order_id}_figabooth.svg"
-        figabooths.append(combine_order(head_path, body_path, fig_path))
+    figabooths_back: List[Figabooth] = []
+
+    for entry in discover_orders(order_dir):
+        fig_path = fig_output_dir / f"{entry.order_id}_figabooth.svg"
+        figabooths.append(combine_order(entry.head_path, entry.torso_path, fig_path))
+
+        back_placeholder_path = fig_output_dir / f"{entry.order_id}_figabooth_back_empty.svg"
+        figabooths_back.append(empty_figabooth(entry.order_id, back_placeholder_path))
+
+        if entry.torso_back_path:
+            front_placeholder_path = fig_output_dir / f"{entry.order_id}_figabooth_front_empty.svg"
+            figabooths.append(empty_figabooth(entry.order_id, front_placeholder_path))
+
+            empty_head_path = fig_output_dir / f"{entry.order_id}_empty_head.svg"
+            make_empty_head_svg(entry.head_path, empty_head_path)
+            back_fig_path = fig_output_dir / f"{entry.order_id}_figabooth_back.svg"
+            figabooths_back.append(
+                combine_order(empty_head_path, entry.torso_back_path, back_fig_path)
+            )
 
     layout_figabooths(figabooths, pdf_path)
+    layout_figabooths(figabooths_back, pdf_back_path)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -311,6 +385,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Output PDF path.",
     )
     parser.add_argument(
+        "--pdf-back",
+        type=Path,
+        default=Path("figabooth_back.pdf"),
+        help="Output PDF path for torso_back.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -325,7 +405,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level))
 
-    process_orders(args.order_dir, args.fig_output_dir, args.pdf)
+    process_orders(args.order_dir, args.fig_output_dir, args.pdf, args.pdf_back)
 
 
 if __name__ == "__main__":
