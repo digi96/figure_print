@@ -366,19 +366,16 @@ def process_orders(order_dir: Path, fig_output_dir: Path, pdf_path: Path, pdf_ba
         fig_path = fig_output_dir / f"{entry.order_id}_figabooth.svg"
         figabooths.append(combine_order(entry.head_path, entry.torso_path, fig_path))
 
-        back_placeholder_path = fig_output_dir / f"{entry.order_id}_figabooth_back_empty.svg"
-        figabooths_back.append(empty_figabooth(entry.order_id, back_placeholder_path))
-
         if entry.torso_back_path:
-            front_placeholder_path = fig_output_dir / f"{entry.order_id}_figabooth_front_empty.svg"
-            figabooths.append(empty_figabooth(entry.order_id, front_placeholder_path))
-
             empty_head_path = fig_output_dir / f"{entry.order_id}_empty_head.svg"
             make_empty_head_svg(entry.head_path, empty_head_path)
             back_fig_path = fig_output_dir / f"{entry.order_id}_figabooth_back.svg"
             figabooths_back.append(
                 combine_order(empty_head_path, entry.torso_back_path, back_fig_path)
             )
+        else:
+            back_placeholder_path = fig_output_dir / f"{entry.order_id}_figabooth_back_empty.svg"
+            figabooths_back.append(empty_figabooth(entry.order_id, back_placeholder_path))
 
     layout_figabooths(figabooths, pdf_path)
     layout_figabooths(figabooths_back, pdf_back_path)
