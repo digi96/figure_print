@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 from xml.etree import ElementTree as ET
+import re
 
 try:
     from reportlab.lib.pagesizes import A4
@@ -86,6 +87,27 @@ def clone_as_group(element: ET.Element) -> ET.Element:
     return group
 
 
+def decode_svg_bytes(data: bytes, source: Path) -> str:
+    xml_header = data[:200].decode("ascii", errors="ignore")
+    match = re.search(r'encoding=["\']([^"\']+)["\']', xml_header)
+    encodings: List[str] = []
+    if match:
+        encodings.append(match.group(1))
+    encodings.extend(["utf-8", "utf-8-sig", "big5", "utf-16", "utf-16le", "utf-16be"])
+    for encoding in encodings:
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    logging.warning("Failed to decode %s with declared encoding; using utf-8 replacement.", source)
+    return data.decode("utf-8", errors="replace")
+
+
+def parse_svg_root(svg_path: Path) -> ET.Element:
+    svg_text = decode_svg_bytes(svg_path.read_bytes(), svg_path)
+    return ET.fromstring(svg_text)
+
+
 @dataclass
 class Figabooth:
     order_id: str
@@ -103,10 +125,8 @@ class OrderEntry:
 
 
 def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabooth:
-    head_tree = ET.parse(head_path)
-    body_tree = ET.parse(body_path)
-    head_root = head_tree.getroot()
-    body_root = body_tree.getroot()
+    head_root = parse_svg_root(head_path)
+    body_root = parse_svg_root(body_path)
 
     (head_width, head_height, body_width, body_height, total_width, total_height) = (
         figabooth_dimensions(head_root, body_root)
@@ -167,7 +187,7 @@ def write_empty_svg(output_path: Path, width: str, height: str, view_box: Option
 
 
 def make_empty_head_svg(head_path: Path, output_path: Path) -> Path:
-    head_root = ET.parse(head_path).getroot()
+    head_root = parse_svg_root(head_path)
     width = head_root.get("width")
     height = head_root.get("height")
     view_box = head_root.get("viewBox")
