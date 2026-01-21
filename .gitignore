@@ -4,4 +4,8 @@ venv/
 generated_figures
 order
 final_output.pdf
-
+.venv/
+figabooth.pdf
+figabooth.zip
+figabooth_back.pdf
+/output
