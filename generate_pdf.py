@@ -36,6 +36,8 @@ except ImportError as exc:  # pragma: no cover - runtime guard
     ) from exc
 
 SVG_NS = "http://www.w3.org/2000/svg"
+STYLE_TAG = f"{{{SVG_NS}}}style"
+DEFS_TAG = f"{{{SVG_NS}}}defs"
 PX_TO_MM = 0.2645833333
 BACKGROUND_PDF = Path(__file__).resolve().with_name("background.pdf")
 
@@ -85,6 +87,21 @@ def clone_as_group(element: ET.Element) -> ET.Element:
     for attr in ["width", "height", "viewBox", "x", "y"]:
         group.attrib.pop(attr, None)
     return group
+
+
+def extract_defs_and_styles(*roots: ET.Element) -> List[ET.Element]:
+    extracted: List[ET.Element] = []
+    for root in roots:
+        for child in list(root):
+            if child.tag in (STYLE_TAG, DEFS_TAG):
+                extracted.append(copy.deepcopy(child))
+    return extracted
+
+
+def strip_defs_and_styles(group: ET.Element) -> None:
+    for child in list(group):
+        if child.tag in (STYLE_TAG, DEFS_TAG):
+            group.remove(child)
 
 
 def decode_svg_bytes(data: bytes, source: Path) -> str:
@@ -146,12 +163,17 @@ def combine_order(head_path: Path, body_path: Path, output_path: Path) -> Figabo
         },
     )
 
+    for asset in extract_defs_and_styles(head_root, body_root):
+        root.append(asset)
+
     head_group = clone_as_group(head_root)
+    strip_defs_and_styles(head_group)
     head_offset_x = (total_width - head_width) / 2
     head_group.set("transform", f"translate({head_offset_x},0)")
     root.append(head_group)
 
     body_group = clone_as_group(body_root)
+    strip_defs_and_styles(body_group)
     body_offset_x = (total_width - body_width) / 2
     #body_group.set("transform", f"translate({body_offset_x},{head_height})")
     body_offset_y = parse_length("8.254px")
