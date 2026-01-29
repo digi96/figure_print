@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 from xml.etree import ElementTree as ET
 import re
+from functools import lru_cache
 
 try:
     from reportlab.lib.pagesizes import A4
@@ -30,9 +31,11 @@ try:
     import cairosvg
     from PIL import Image
     from reportlab.lib.utils import ImageReader
+    from fontTools.ttLib import TTFont
+    from fontTools.pens.svgPathPen import SVGPathPen
 except ImportError as exc:  # pragma: no cover - runtime guard
     raise SystemExit(
-        "Missing dependencies. Please install them with 'pip install reportlab svglib PyPDF2 cairosvg pillow'."
+        "Missing dependencies. Please install them with 'pip install reportlab svglib PyPDF2 cairosvg pillow fonttools'."
     ) from exc
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -58,6 +61,206 @@ def parse_length(value: str | None) -> float:
             if suffix == "in":
                 return (num * 25.4) / PX_TO_MM
     return float(value)
+
+
+def parse_style(style_value: str | None) -> dict:
+    if not style_value:
+        return {}
+    parts = [part.strip() for part in style_value.split(";") if part.strip()]
+    style = {}
+    for part in parts:
+        if ":" not in part:
+            continue
+        key, value = part.split(":", 1)
+        style[key.strip()] = value.strip()
+    return style
+
+
+def clean_font_family(value: str | None) -> Optional[str]:
+    if not value:
+        return None
+    value = value.strip()
+    if value.startswith(("'", '"')) and value.endswith(("'", '"')):
+        value = value[1:-1]
+    return value
+
+
+@lru_cache(maxsize=8)
+def load_font(font_path: str) -> TTFont:
+    return TTFont(font_path)
+
+
+def get_font_family_name(font: TTFont) -> Optional[str]:
+    name_table = font["name"]
+    for record in name_table.names:
+        if record.nameID != 1:
+            continue
+        try:
+            value = record.toUnicode().strip()
+        except Exception:
+            continue
+        if value:
+            return value
+    return None
+
+
+@lru_cache(maxsize=2)
+def get_project_font_map(font_dir: str) -> dict[str, Path]:
+    base = Path(font_dir)
+    if not base.exists():
+        return {}
+    font_map: dict[str, Path] = {}
+    for font_path in base.glob("*.ttf"):
+        try:
+            font = load_font(str(font_path))
+        except Exception:
+            continue
+        family = get_font_family_name(font)
+        if not family:
+            continue
+        font_map[family] = font_path
+    return font_map
+
+
+def get_kern_table(font: TTFont) -> dict:
+    kern_table = {}
+    if "kern" not in font:
+        return kern_table
+    for subtable in font["kern"].kernTables:
+        if subtable.version != 0 or not getattr(subtable, "kernTable", None):
+            continue
+        for (left, right), value in subtable.kernTable.items():
+            kern_table[(left, right)] = value
+    return kern_table
+
+
+def convert_text_to_paths(svg_text: str, font_family_paths: dict[str, Path]) -> str:
+    if not font_family_paths:
+        return svg_text
+    try:
+        root = ET.fromstring(svg_text)
+    except ET.ParseError:
+        return svg_text
+
+    ns = {"svg": SVG_NS}
+    text_elements = []
+
+    for parent in root.iter():
+        for child in list(parent):
+            if child.tag == f"{{{SVG_NS}}}text":
+                text_elements.append((parent, child))
+
+    if not text_elements:
+        return svg_text
+
+    for parent, text_elem in text_elements:
+        if list(text_elem):
+            continue
+
+        style = parse_style(text_elem.get("style"))
+        font_family = clean_font_family(
+            text_elem.get("font-family") or style.get("font-family")
+        )
+        if not font_family:
+            continue
+
+        font_path = font_family_paths.get(font_family)
+        if not font_path or not font_path.exists():
+            continue
+
+        try:
+            font = load_font(str(font_path))
+        except Exception:
+            continue
+
+        text_value = text_elem.text or ""
+        if not text_value.strip():
+            continue
+
+        font_size_value = text_elem.get("font-size") or style.get("font-size") or "16"
+        try:
+            font_size = parse_length(font_size_value)
+        except ValueError:
+            font_size = 16.0
+
+        try:
+            x = float(text_elem.get("x") or "0")
+            y = float(text_elem.get("y") or "0")
+        except ValueError:
+            x, y = 0.0, 0.0
+
+        text_anchor = (text_elem.get("text-anchor") or style.get("text-anchor") or "start").strip()
+        dominant_baseline = (
+            text_elem.get("dominant-baseline") or style.get("dominant-baseline") or ""
+        ).strip()
+
+        cmap = font.getBestCmap() or {}
+        glyph_set = font.getGlyphSet()
+        hmtx = font["hmtx"].metrics
+        kern_table = get_kern_table(font)
+        units_per_em = font["head"].unitsPerEm
+        ascent = font["hhea"].ascent
+        descent = font["hhea"].descent
+
+        glyph_names = []
+        for char in text_value:
+            glyph_name = cmap.get(ord(char), ".notdef")
+            glyph_names.append(glyph_name)
+
+        advances = []
+        total_advance = 0
+        prev_glyph = None
+        for glyph_name in glyph_names:
+            advance, _ = hmtx.get(glyph_name, (0, 0))
+            kern = 0
+            if prev_glyph:
+                kern = kern_table.get((prev_glyph, glyph_name), 0)
+            total_advance += advance + kern
+            advances.append((advance, kern))
+            prev_glyph = glyph_name
+
+        scale = font_size / units_per_em
+        total_width = total_advance * scale
+        if text_anchor in ("middle", "center"):
+            start_x = x - total_width / 2.0
+        elif text_anchor in ("end", "right"):
+            start_x = x - total_width
+        else:
+            start_x = x
+
+        if dominant_baseline == "middle":
+            baseline_y = y - ((ascent + descent) / 2.0) * scale
+        else:
+            baseline_y = y
+
+        group = ET.Element(f"{{{SVG_NS}}}g")
+        fill = text_elem.get("fill") or style.get("fill")
+        if fill:
+            group.set("fill", fill)
+        if "opacity" in text_elem.attrib:
+            group.set("opacity", text_elem.get("opacity"))
+
+        cursor = 0.0
+        for glyph_name, (advance, kern) in zip(glyph_names, advances):
+            glyph = glyph_set.get(glyph_name)
+            if glyph is None:
+                cursor += (advance + kern) * scale
+                continue
+            pen = SVGPathPen(glyph_set)
+            glyph.draw(pen)
+            d = pen.getCommands()
+            if d:
+                path = ET.Element(f"{{{SVG_NS}}}path", {"d": d})
+                x_pos = start_x + cursor
+                path.set("transform", f"translate({x_pos},{baseline_y}) scale({scale}, {-scale})")
+                group.append(path)
+            cursor += (advance + kern) * scale
+
+        parent_index = list(parent).index(text_elem)
+        parent.remove(text_elem)
+        parent.insert(parent_index, group)
+
+    return ET.tostring(root, encoding="unicode")
 
 
 def element_dimensions(root: ET.Element) -> Tuple[float, float]:
@@ -260,12 +463,19 @@ def svg_to_png_bytes(svg_path: Path, width_px: float, height_px: float) -> bytes
     """Convert SVG to PNG bytes using cairosvg for better clipPath support."""
     with open(svg_path, 'rb') as svg_file:
         svg_data = svg_file.read()
-    
+
+    svg_text = decode_svg_bytes(svg_data, svg_path)
+    project_font_dir = Path(__file__).resolve().with_name("fonts")
+    local_font_map = get_project_font_map(str(project_font_dir))
+
+    svg_text = convert_text_to_paths(svg_text, local_font_map)
+    svg_data = svg_text.encode("utf-8")
     # Convert SVG to PNG with specified dimensions
     png_data = cairosvg.svg2png(
         bytestring=svg_data,
         output_width=int(width_px),
-        output_height=int(height_px)
+        output_height=int(height_px),
+        unsafe=True,  # allow embedded data: fonts and external resources
     )
     return png_data
 

@@ -3,3 +3,4 @@ svglib
 PyPDF2
 cairosvg
 pillow
+fonttools
