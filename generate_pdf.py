@@ -111,14 +111,19 @@ def get_project_font_map(font_dir: str) -> dict[str, Path]:
         return {}
     font_map: dict[str, Path] = {}
     for font_path in base.glob("*.ttf"):
+        font_map[font_path.stem] = font_path
+        logging.debug("Mapped font name '%s' to %s", font_path.stem, font_path)
         try:
             font = load_font(str(font_path))
         except Exception:
             continue
         family = get_font_family_name(font)
-        if not family:
-            continue
-        font_map[family] = font_path
+        if family and family != font_path.stem:
+            logging.debug(
+                "Font family '%s' differs from file stem '%s'; SVG should use file stem",
+                family,
+                font_path.stem,
+            )
     return font_map
 
 
